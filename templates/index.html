@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LAN Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f2f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .login-form, .register-form {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .chat-container {
+            display: none;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            height: calc(100vh - 200px);
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-header {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .chat-messages {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 8px;
+            max-width: 70%;
+        }
+        .message.sent {
+            background-color: #0084ff;
+            color: white;
+            margin-left: auto;
+        }
+        .message.received {
+            background-color: #e9ecef;
+            color: black;
+        }
+        .chat-input {
+            padding: 15px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+        }
+        input[type="text"], input[type="password"], input[type="email"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: #0084ff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0073e6;
+        }
+        .emoji-panel {
+            display: flex;
+            gap: 5px;
+            padding: 10px;
+            overflow-x: auto;
+        }
+        .emoji-button {
+            font-size: 24px;
+            padding: 5px;
+            cursor: pointer;
+            background: none;
+            border: none;
+        }
+        .user-list {
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .user-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-bottom: 5px;
+        }
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #28a745;
+        }
+        .status-indicator.offline {
+            background-color: #dc3545;
+        }
+        .form-toggle {
+            text-align: center;
+            margin-top: 10px;
+        }
+        .form-toggle a {
+            color: #0084ff;
+            text-decoration: none;
+        }
+        .form-toggle a:hover {
+            text-decoration: underline;
+        }
+        .error-message {
+            color: #dc3545;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="loginForm" class="login-form">
+            <h2>Login to Chat</h2>
+            <div id="loginError" class="error-message"></div>
+            <input type="text" id="loginUsername" placeholder="Username">
+            <input type="password" id="loginPassword" placeholder="Password">
+            <button onclick="login()">Login</button>
+            <div class="form-toggle">
+                <a href="#" onclick="toggleForms()">Don't have an account? Register</a>
+            </div>
+        </div>
+
+        <div id="registerForm" class="register-form" style="display: none;">
+            <h2>Register New Account</h2>
+            <div id="registerError" class="error-message"></div>
+            <input type="text" id="registerUsername" placeholder="Username">
+            <input type="password" id="registerPassword" placeholder="Password">
+            <input type="email" id="registerEmail" placeholder="Email (optional)">
+            <button onclick="register()">Register</button>
+            <div class="form-toggle">
+                <a href="#" onclick="toggleForms()">Already have an account? Login</a>
+            </div>
+        </div>
+
+        <div id="chatContainer" class="chat-container">
+            <div class="chat-header">
+                <h2>LAN Chat</h2>
+                <div class="user-list" id="userList"></div>
+            </div>
+            <div class="chat-messages" id="chatMessages"></div>
+            <div class="emoji-panel" id="emojiPanel"></div>
+            <div class="chat-input">
+                <input type="text" id="messageInput" placeholder="Type a message...">
+                <button onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let currentUser = null;
+        const emojis = {
+            ":smile:": "😊",
+            ":laugh:": "😂",
+            ":heart:": "❤️",
+            ":thumbsup:": "👍",
+            ":wave:": "👋",
+            ":fire:": "🔥",
+            ":star:": "⭐",
+            ":check:": "✅",
+            ":x:": "❌",
+            ":rocket:": "🚀"
+        };
+
+        // Initialize emoji panel
+        const emojiPanel = document.getElementById('emojiPanel');
+        Object.entries(emojis).forEach(([code, emoji]) => {
+            const button = document.createElement('button');
+            button.className = 'emoji-button';
+            button.textContent = emoji;
+            button.onclick = () => insertEmoji(code);
+            emojiPanel.appendChild(button);
+        });
+
+        function toggleForms() {
+            const loginForm = document.getElementById('loginForm');
+            const registerForm = document.getElementById('registerForm');
+            const loginError = document.getElementById('loginError');
+            const registerError = document.getElementById('registerError');
+            
+            if (loginForm.style.display === 'none') {
+                loginForm.style.display = 'block';
+                registerForm.style.display = 'none';
+                loginError.textContent = '';
+            } else {
+                loginForm.style.display = 'none';
+                registerForm.style.display = 'block';
+                registerError.textContent = '';
+            }
+        }
+
+        function register() {
+            const username = document.getElementById('registerUsername').value;
+            const password = document.getElementById('registerPassword').value;
+            const email = document.getElementById('registerEmail').value;
+            const errorDiv = document.getElementById('registerError');
+            
+            if (!username || !password) {
+                errorDiv.textContent = 'Username and password are required';
+                return;
+            }
+            
+            fetch('/register', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username, password, email })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    errorDiv.textContent = data.message;
+                    setTimeout(() => {
+                        toggleForms();
+                        document.getElementById('loginUsername').value = username;
+                        document.getElementById('loginPassword').value = password;
+                        login();
+                    }, 1000);
+                } else {
+                    errorDiv.textContent = data.message;
+                }
+            })
+            .catch(error => {
+                errorDiv.textContent = 'Registration failed. Please try again.';
+            });
+        }
+
+        function insertEmoji(code) {
+            const input = document.getElementById('messageInput');
+            const start = input.selectionStart;
+            const end = input.selectionEnd;
+            const text = input.value;
+            input.value = text.substring(0, start) + code + text.substring(end);
+            input.selectionStart = input.selectionEnd = start + code.length;
+        }
+
+        function login() {
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+            const errorDiv = document.getElementById('loginError');
+            
+            if (!username || !password) {
+                errorDiv.textContent = 'Username and password are required';
+                return;
+            }
+            
+            socket.emit('login', { username, password });
+        }
+
+        function sendMessage() {
+            if (!currentUser) return;
+            
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            
+            if (message) {
+                socket.emit('message', {
+                    username: currentUser,
+                    message: message
+                });
+                input.value = '';
+            }
+        }
+
+        // Socket event handlers
+        socket.on('login_success', (data) => {
+            currentUser = data.username;
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('registerForm').style.display = 'none';
+            document.getElementById('chatContainer').style.display = 'flex';
+            document.getElementById('loginError').textContent = '';
+        });
+
+        socket.on('login_error', (data) => {
+            document.getElementById('loginError').textContent = data.message;
+        });
+
+        socket.on('message', (data) => {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${data.username === currentUser ? 'sent' : 'received'}`;
+            messageDiv.innerHTML = `
+                <strong>${data.username}</strong><br>
+                ${data.content}
+            `;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        });
+
+        socket.on('user_list', (data) => {
+            const userList = document.getElementById('userList');
+            userList.innerHTML = data.users.map(user => `
+                <div class="user-item">
+                    <span class="status-indicator"></span>
+                    ${user}
+                </div>
+            `).join('');
+        });
+
+        socket.on('user_status', (data) => {
+            const userList = document.getElementById('userList');
+            const userItems = userList.getElementsByClassName('user-item');
+            for (let item of userItems) {
+                if (item.textContent.trim() === data.username) {
+                    const indicator = item.querySelector('.status-indicator');
+                    indicator.className = `status-indicator ${data.status === 'offline' ? 'offline' : ''}`;
+                    break;
+                }
+            }
+        });
+
+        // Handle enter key
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html> 
